@@ -1,102 +1,62 @@
 #include "LPD8806.h"
 #include "SPI.h"
 #define NUMBER_OF_SAMPLES 15
-/*
-  Analog Input
- Demonstrates analog input by reading an analog sensor on analog pin 0 and
- turning on and off a light emitting diode(LED)  connected to digital pin 13. 
- The amount of time the LED will be on and off depends on
- the value obtained by analogRead(). 
- 
- The circuit:
- * Potentiometer attached to analog input 0
- * center pin of the potentiometer to the analog pin
- * one side pin (either one) to ground
- * the other side pin to +5V
- * LED anode (long leg) attached to digital output 13
- * LED cathode (short leg) attached to ground
- 
- * Note: because most Arduinos have a built-in LED attached 
- to pin 13 on the board, the LED is optional.
- 
- 
- Created by David Cuartielles
- Modified 4 Sep 2010
- By Tom Igoe
- 
- This example code is in the public domain.
- 
- http://arduino.cc/en/Tutorial/AnalogInput
- 
- */
-/*****************************************************************************/
 
-//#if defined(USB_SERIAL) || defined(USB_SERIAL_ADAFRUIT)
-// this is for teensyduino support
-int dataPin = 2;
-int clockPin = 1;
-//#else 
-// these are the pins we use for the LED belt kit using
-// the Leonardo pinouts
-//int dataPin = 16;
-//int clockPin = 15;
-//#endif
+/*
+BONNAROO BELT v1.0
+
+This program reads the analog signal from a Inex Robotics ZX-SOUND microphone
+module, cleans it up a bit and then turns the signal into an output for a
+programmable LED belt kit from Adafruit. Essentially, it turns a volume level
+reading into a VU meter style output for the LED belt. Awesome, right?
+
+ZX-Sound sensor:
+ttp://www.inexglobal.com/products.php?type=addon&cat=sensors&model=zxsound
+
+Programmable LED belt kit:
+http://www.adafruit.com/products/332
+*/ 
+
+// These are the pins used to communicate with the LED belt. On a deumilanove
+// you use dataPin = 11 and clockPin = 13, but as you can see below they're 
+// reversed because I'm a donkey and soldered them backwards.
+int dataPin = 13;
+int clockPin = 11;
 
 // Set the first variable to the NUMBER of pixels. 32 = 32 pixels in a row
 // The LED strips are 32 LEDs per meter but you can extend/cut the strip
 LPD8806 strip = LPD8806(32, dataPin, clockPin);
 
-
-
+// Initialize our variables!
 int sensorPin = A0;   // select the input pin for the potentiometer
 int ledPin = 13;      // select the pin for the LED
 int sensorValue = 0;  // variable to store the value coming from the sensor
 uint32_t color;
-int i,b,c;
+int i,b,c,j;
 int samples[NUMBER_OF_SAMPLES] = {0};
 int sample = 0;
 int sampleTotal=0;
 byte sampleIndex=0;
 int loopCounter=0;
 
-
 void setup() {
+  // Initialize the LED belt
   strip.begin();
   strip.show();
-  // declare the ledPin as an OUTPUT:
-  //pinMode(ledPin, OUTPUT);  
-  //Serial.begin(9600);
-  //Serial.println("begin test");
-  
 }
 
-void testFunction(uint32_t c, uint8_t level);
-void rainbowCycle(uint8_t level);
+void awesomeBeltLights(uint32_t c, uint8_t level);
 uint32_t Wheel(uint16_t WheelPos);
 
 void loop() {
   // read the value from the sensor:
   sensorValue = analogRead(sensorPin);    
-  //  Serial.println(sensorValue);  
-  //digitalWrite(ledPin, HIGH);
 
-//  if(sensorValue>80) { 
-//  if(loopCounter < 1000 ) {
-//    color = strip.Color(255,0,0);
-//  }
-//  else if (loopCounter >= 1000 && loopCounter < 2000) {
-//    color = strip.Color(0,255,0);
-//  }
-//  else if (loopCounter >= 2000 && loopCounter < 3000) {
-//    color = strip.Color(0,0,255);
-//  }
-//  }
-//  }    
-//  else {
-//    color = strip.Color(0,0,0);
-  //for(b=0;b<384*5;b++) {
-   if(loopCounter % 10 == 0) {
-      c++;
+  // This modulus check controls how fast the color of the LEDs
+  // is changed. Increase to slow the color change down, decrease
+  // to speed it up.
+  if(loopCounter % 100 == 0) {
+     c++;
      if(c%32 == 0) {
        b++;
        c=0;
@@ -105,67 +65,62 @@ void loop() {
        b=0;
        c=0;
      }
-
-        color = Wheel(((c * 384 / 32) + b) % 384);
+     // Set the color of the LEDs using the Adafruit Wheel function
+     color = Wheel(((c * 384 / 32) + b) % 384);
   }
 
+  // This bit of code smooths the analog input out so it's not too erratic
   sampleTotal -= samples[sampleIndex];
   samples[sampleIndex] = sensorValue;
   sampleTotal += samples[sampleIndex++];
   if(sampleIndex >= NUMBER_OF_SAMPLES) { sampleIndex = 0; }
   sample = sampleTotal / NUMBER_OF_SAMPLES;
-  testFunction(color,sample);
-  //rainbowCycle(sample);
-//  delay(20);
+  
+  // We've got a normalized input value at this point, let's turn lights on!
+  awesomeBeltLights(color,sample);
+
+  // Turn the LEDs off when we're done, otherwise the VU meter will always
+  // stay at the highest level
   for(i=0; i<32; i++){
     strip.setPixelColor(i,strip.Color(0,0,0));
   }
 
+  // Increment our loop counter
   loopCounter++;
 }
 
-void testFunction(uint32_t c, uint8_t level) {
-  int temp=0;
-  temp = (level-7);
-  //if(level > 32) {
-  //  level = 32;
-  //}
-  int j; 
-  for(j=0; j<temp; j++){
-    strip.setPixelColor(j,c);
+/* 
+This custom function handles the logic to turn the LEDs on.
+*/ 
+void awesomeBeltLights(uint32_t c, uint8_t level) {
+  // We need a temporary variable to store the adjusted volume level
+  int adjustedLevel=0;
+
+  // The raw reading from the microphone sensor is very sensitive
+  // so we need to reduce the sensitivity down by some factor (5 below) and then
+  // ignore ambient noise (the -5 at the end)
+  adjustedLevel = (level/5)-5;
+
+  // The VU meter is split into equal sections and if your belt is 32 LEDs long, then
+  // each half gets 16 LEDS (0-15 or 16-32). If the reading is over 15, the volume is
+  // at max level, so just truncate it so the loop doesn't run forever
+  if(adjustedLevel > 15) {     
+    adjustedLevel = 15;
   }
-  strip.show();
-  //delay(wait);
-}
-
-// Cycle through the color wheel, equally spaced around the belt
-void rainbowCycle(uint8_t level) {
-  int z=0;
-  uint16_t y;
-  int temp1=0;
-  int wheelPos=0;
-  uint16_t wheelVal = 0;
   
-  temp1 = (level-7);
-
-
-    for (z=0; z < temp1; z++) {
-//      for (y=0; y < 384 * 5; y++) {     // 5 cycles of all 384 colors in the wheel
-      // tricky math! we use each pixel as a fraction of the full 384-color
-      // wheel (thats the i / strip.numPixels() part)
-      // Then add in j which makes the colors go around per pixel
-      // the % 384 is to make the wheel cycle around
-      wheelPos = random(0, 1920);
-      //wheelVal = Wheel(384 / temp1);
-      wheelVal = Wheel(((z * 384 / 32 ) + wheelPos )% 384);
-      //((384 / temp1) + wheelPos) % 384)
-      strip.setPixelColor(z, wheelVal);
-    }
-    strip.show();   // write all the pixels out
-//    delay(wait);
-//}
+  // Now that we have a usable volume level, loop through the LEDs and set them on or off 
+  for(j=0; j<adjustedLevel; j++){
+    strip.setPixelColor( (j+16) ,c);
+    strip.setPixelColor( (15-j) ,c);
+  }
+  // Now that we've set the LED colors to be displayed, turn them on
+  strip.show();
 }
 
+/* 
+This function was provided by Adafruit in the LED belt example code and is
+unmodified.
+*/
 uint32_t Wheel(uint16_t WheelPos)
 {
   byte r, g, b;
